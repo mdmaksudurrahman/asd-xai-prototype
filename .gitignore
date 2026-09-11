@@ -1,0 +1,31 @@
+# --- Sensitive data: never commit the real model or real images ---
+# Only the placeholder .txt files in these folders should ever be tracked.
+models/*
+!models/PUT_MODEL_HERE.txt
+data/test/*
+!data/test/PUT_TEST_IMAGES_HERE.txt
+static/uploads/*
+!static/uploads/.gitkeep
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# --- Flask / local runtime ---
+instance/
+*.log

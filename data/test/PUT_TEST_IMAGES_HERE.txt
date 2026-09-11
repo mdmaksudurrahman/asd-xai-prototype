@@ -1,0 +1,1 @@
+Put your 280 test images here (jpg/png). Filenames containing 'autistic'/'non_autistic' are used as an optional ground-truth label for display only.

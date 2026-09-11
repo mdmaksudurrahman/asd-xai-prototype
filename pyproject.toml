@@ -1,0 +1,22 @@
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+# E, F = pyflakes/pycodestyle correctness checks (unused vars, undefined
+# names, etc.) — these are the ones worth failing CI over.
+select = ["E", "F"]
+ignore = [
+    "E402",  # module-level imports not at top of file — needed for
+             # `matplotlib.use("Agg")` before `import matplotlib.pyplot`,
+             # and for the `sys.path.insert(...)` shim in tests/
+    "E501",  # line too long — black handles wrapping; a few long f-strings
+             # in the figure-title code are clearer left on one line
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*.py" = ["E402"]
+
+[tool.black]
+line-length = 110
+target-version = ["py310"]

@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Facial-Image ASD Screening — Explainable AI Prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+
+<header class="masthead no-print">
+  <div class="masthead__mark">
+    <svg width="34" height="34" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <circle cx="17" cy="17" r="16" stroke="currentColor" stroke-width="1.4"/>
+      <circle cx="17" cy="13.5" r="4.6" stroke="currentColor" stroke-width="1.4"/>
+      <path d="M8.5 26c1.7-4.3 5-6.4 8.5-6.4s6.8 2.1 8.5 6.4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+      <circle cx="17" cy="13.5" r="1" fill="currentColor"/>
+    </svg>
+  </div>
+  <div class="masthead__text">
+    <h1>Facial-Image ASD Screening</h1>
+    <p>Explainable AI research prototype — deep-learning detection with visual, region-level reasoning</p>
+  </div>
+</header>
+
+{% if not model_ready %}
+<div class="setup-banner no-print">
+  <strong>No model loaded yet.</strong>
+  Place your trained file at <code>models/Xception_best.h5</code> (or set the
+  <code>ASD_MODEL_PATH</code> environment variable), then restart the app.
+  {% if n_samples == 0 %}
+  Also add your held-out test images to <code>data/test/</code> to enable the
+  sample-image option.
+  {% endif %}
+</div>
+{% endif %}
+
+<main class="workbench">
+
+  <section class="panel panel--input no-print" aria-label="Provide an image">
+    <h2>Get a result</h2>
+    <p class="panel__hint">Start with a test image — no photo needed — or analyse your own.</p>
+
+    <button id="sampleBtn" class="btn btn--primary" {% if n_samples == 0 %}disabled{% endif %}>
+      Try a random test image
+      <span class="btn__meta">{{ n_samples }} on file</span>
+    </button>
+
+    <div class="divider"><span>or analyse your own photo</span></div>
+
+    <div id="dropzone" class="dropzone" role="button" tabindex="0" aria-label="Upload a photo to analyse">
+      <input type="file" id="fileInput" accept=".jpg,.jpeg,.png,.bmp,.webp" hidden>
+      <svg width="26" height="26" viewBox="0 0 24 24" fill="none"><path d="M12 16V4M12 4L7 9M12 4l5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      <p><span class="dropzone__cta">Choose a photo</span> or drop it here</p>
+      <p class="dropzone__meta">JPG, PNG, BMP or WEBP — up to 12&nbsp;MB. Analysis starts right away.</p>
+    </div>
+
+    <section class="history no-print" aria-label="This session">
+      <h3>This session</h3>
+      <p id="historyEmpty" class="history__empty">Results you analyse will appear here so you can compare them.</p>
+      <div id="historyStrip" class="history__strip"></div>
+    </section>
+  </section>
+
+  <section class="panel panel--output" aria-label="Result">
+    <div class="panel__heading-row no-print">
+      <h2>Result</h2>
+      <button id="resetBtn" class="btn-text" hidden>Start over</button>
+    </div>
+
+    <div id="emptyState" class="empty-state">
+      <p>Nothing analysed yet. Choose an image on the left to begin.</p>
+    </div>
+
+    <div id="loadingState" class="loading-state no-print" hidden>
+      <div class="spinner" aria-hidden="true"></div>
+      <ol id="loadingSteps" class="loading-steps"></ol>
+    </div>
+
+    <div id="errorState" class="error-state no-print" hidden></div>
+
+    <div id="resultState" class="result-state" hidden>
+
+      <div id="noFaceBanner" class="warning-banner" hidden>
+        No face was clearly detected in this image. The prediction and heatmap
+        below may not be reliable — try a clearer, front-facing, well-lit photo.
+      </div>
+
+      <div class="result-header">
+        <div>
+          <div class="result-header__label">Prediction</div>
+          <div class="result-header__value" id="predLabel">—</div>
+        </div>
+        <div class="confidence-badge" id="confBadge">
+          <span class="confidence-badge__dot" id="confDot"></span>
+          <span id="confText">—</span>
+        </div>
+      </div>
+      <p id="lowConfNote" class="low-conf-note" hidden>
+        Low confidence — consider a repeat scan with a clearer photo, or a clinician follow-up.
+      </p>
+
+      <div class="prob-bars">
+        <div class="prob-bar">
+          <div class="prob-bar__row"><span>Non-Autistic</span><span id="probNon">—</span></div>
+          <div class="prob-bar__track"><div class="prob-bar__fill prob-bar__fill--a" id="probNonFill"></div></div>
+        </div>
+        <div class="prob-bar">
+          <div class="prob-bar__row"><span>Autistic</span><span id="probAsd">—</span></div>
+          <div class="prob-bar__track"><div class="prob-bar__fill prob-bar__fill--b" id="probAsdFill"></div></div>
+        </div>
+      </div>
+
+      <div id="sampleMeta" class="sample-meta" hidden>
+        Test image <code id="sampleFilename"></code>
+        <span id="sampleTrue"></span>
+      </div>
+
+      <div class="compare-viewer">
+        <div class="compare-viewer__stage" id="compareStage">
+          <img id="imgOriginal" alt="Original image" class="compare-viewer__img">
+          <img id="imgGradcam" alt="Grad-CAM explanation" class="compare-viewer__img compare-viewer__img--overlay">
+        </div>
+        <input type="range" id="blendSlider" min="0" max="100" value="65" class="blend-slider" aria-label="Blend between original photo and explanation overlay">
+        <div class="blend-slider__labels"><span>Original</span><span>Explanation</span></div>
+        <div class="legend">
+          <span class="legend__label">Less influence</span>
+          <div class="legend__bar"></div>
+          <span class="legend__label">More influence</span>
+        </div>
+      </div>
+
+      <div id="scorecamBlock" class="scorecam-block" hidden>
+        <figure>
+          <img id="imgScorecam" alt="Score-CAM explanation">
+          <figcaption>Score-CAM — an independent, gradient-free cross-check</figcaption>
+        </figure>
+      </div>
+
+      <div id="limeBlock" class="scorecam-block" hidden>
+        <figure>
+          <img id="imgLime" alt="LIME explanation">
+          <figcaption>LIME — green marks regions supporting the prediction, red marks regions contradicting it</figcaption>
+        </figure>
+      </div>
+
+      <div id="panel4Block" class="panel4-block" hidden>
+        <h3>Side-by-side comparison</h3>
+        <img id="imgPanel4" alt="Original, Grad-CAM, Score-CAM and LIME side by side" class="panel4-block__img">
+      </div>
+
+      <div id="overlapBlock" class="overlap-block" hidden>
+        <h3>Do the three methods agree?</h3>
+        <p class="overlap-block__hint">
+          Each pair below compares the top 10% most-influential pixels from two
+          methods. Higher IoU/Spearman means the methods agree more about
+          which pixels mattered.
+        </p>
+        <div class="overlap-block__grid">
+          <figure>
+            <img id="imgOverlapGS" alt="Grad-CAM vs Score-CAM overlap">
+            <figcaption>Grad-CAM vs Score-CAM<br><span id="metricGS"></span></figcaption>
+          </figure>
+          <figure>
+            <img id="imgOverlapGL" alt="Grad-CAM vs LIME overlap">
+            <figcaption>Grad-CAM vs LIME<br><span id="metricGL"></span></figcaption>
+          </figure>
+          <figure>
+            <img id="imgOverlapSL" alt="Score-CAM vs LIME overlap">
+            <figcaption>Score-CAM vs LIME<br><span id="metricSL"></span></figcaption>
+          </figure>
+          <figure>
+            <img id="imgOverlap3" alt="Three-way overlap">
+            <figcaption>All three (3-way)<br><span id="metric3"></span></figcaption>
+          </figure>
+        </div>
+      </div>
+
+      <div class="tier-actions no-print">
+        <button id="crossCheckBtn" class="btn btn--secondary">
+          Run a cross-check (Score-CAM)
+          <span class="btn__meta">~10–20s</span>
+        </button>
+        <button id="fullReportBtn" class="btn btn--secondary">
+          Generate full XAI report (Grad-CAM + Score-CAM + LIME + overlap)
+          <span class="btn__meta">~30s–3min</span>
+        </button>
+      </div>
+
+      <p class="region-summary" id="regionSummary"></p>
+
+      <div class="result-actions no-print">
+        <button id="printBtn" class="btn-text">Download this result as a report</button>
+      </div>
+
+      <p class="disclaimer">
+        Research prototype output — a screening aid, not a clinical diagnosis.
+        Any concern about a child's development should be discussed with a
+        qualified clinician.
+      </p>
+    </div>
+
+  </section>
+
+</main>
+
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
