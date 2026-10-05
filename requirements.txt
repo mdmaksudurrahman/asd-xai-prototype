@@ -1,11 +1,16 @@
+# Exact versions pinned to match the thesis environment. In particular:
+# OpenCV has no upper bound anywhere else in this stack, and OpenCV 5
+# removes the face detector this app relies on (both Haar cascade and
+# YuNet) and currently has no stable release compatible with the rest of
+# this pinned set anyway — do not loosen opencv-python-headless without
+# checking that first.
 flask>=3.0
-tensorflow>=2.15,<2.17
-numpy>=1.24,<2.0
-pillow>=10.0
-opencv-python-headless>=4.8
-matplotlib>=3.7
-
-lime>=0.2.0.1
-scikit-image>=0.21
-scikit-learn>=1.3
+tensorflow==2.19.0
+numpy==2.0.2
 pandas>=2.0
+pillow>=10.0
+opencv-python-headless==4.12.0.88
+matplotlib>=3.7
+lime==0.2.0.1
+scikit-image==0.25.2
+scikit-learn>=1.3

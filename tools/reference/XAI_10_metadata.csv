@@ -1,0 +1,11 @@
+idx,path,true_id,true_label,pred_id,pred_label,conf,p0,p1
+1,/content/drive/MyDrive/ASD/test/Autistic (10).jpg,1,Autistic,1,Autistic,0.9980183839797974,0.001981645356863737,0.9980183839797974
+2,/content/drive/MyDrive/ASD/test/Autistic (138).jpg,1,Autistic,1,Autistic,0.9971488118171692,0.0028512582648545504,0.9971488118171692
+3,/content/drive/MyDrive/ASD/test/Non-Autistic (7).jpg,0,Non_Autistic,0,Non_Autistic,0.9870681762695312,0.9870681762695312,0.01293178927153349
+4,/content/drive/MyDrive/ASD/valid/Non_Autistic.26.jpg,0,Non_Autistic,0,Non_Autistic,0.885604977607727,0.885604977607727,0.11439502239227295
+5,/content/drive/MyDrive/ASD/test/Autistic (52).jpg,1,Autistic,1,Autistic,0.976068377494812,0.02393164299428463,0.976068377494812
+6,/content/drive/MyDrive/ASD/test/Autistic (15).jpg,1,Autistic,1,Autistic,0.9172208309173584,0.08277919888496399,0.9172208309173584
+7,/content/drive/MyDrive/ASD/test/Non-Autistic (63).jpg,0,Non_Autistic,0,Non_Autistic,0.7546435594558716,0.7546435594558716,0.24535644054412842
+8,/content/drive/MyDrive/ASD/test/Autistic (125).jpg,1,Autistic,1,Autistic,0.9593234062194824,0.04067659378051758,0.9593234062194824
+9,/content/drive/MyDrive/ASD/test/Autistic (40).jpg,1,Autistic,1,Autistic,0.9127296805381775,0.08727031946182251,0.9127296805381775
+10,/content/drive/MyDrive/ASD/valid/Autistic.28.jpg,1,Autistic,1,Autistic,0.9997451901435852,0.0002548538031987846,0.9997451901435852

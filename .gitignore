@@ -3,6 +3,7 @@
 models/*
 !models/PUT_MODEL_HERE.txt
 data/test/*
+reproduce_images/*
 !data/test/PUT_TEST_IMAGES_HERE.txt
 static/uploads/*
 !static/uploads/.gitkeep

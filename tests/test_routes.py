@@ -26,8 +26,18 @@ def _image_bytes():
 # someone adds their own Xception_best.h5 — this must fail helpfully, not
 # crash with a 500).
 # --------------------------------------------------------------------------
-def test_home_page_shows_setup_banner_when_no_model(monkeypatch):
+def _simulate_no_model(monkeypatch):
+    """Pin MODEL_PATH to a path that is guaranteed not to exist, in addition
+    to clearing _model — otherwise the A4 lazy-load before_request hook
+    will (correctly, for production) go find and load whatever real model
+    actually sits at the default MODEL_PATH on this machine, silently
+    undoing the `_model = None` simulation these tests rely on."""
     monkeypatch.setattr(app_module, "_model", None)
+    monkeypatch.setattr(app_module, "MODEL_PATH", "/definitely/does/not/exist/Xception_best.h5")
+
+
+def test_home_page_shows_setup_banner_when_no_model(monkeypatch):
+    _simulate_no_model(monkeypatch)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
         resp = c.get("/")
@@ -36,7 +46,7 @@ def test_home_page_shows_setup_banner_when_no_model(monkeypatch):
 
 
 def test_predict_upload_503_when_no_model(monkeypatch):
-    monkeypatch.setattr(app_module, "_model", None)
+    _simulate_no_model(monkeypatch)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
         resp = c.post(
@@ -49,7 +59,7 @@ def test_predict_upload_503_when_no_model(monkeypatch):
 
 
 def test_predict_sample_503_when_no_model(monkeypatch):
-    monkeypatch.setattr(app_module, "_model", None)
+    _simulate_no_model(monkeypatch)
     app_module.app.config["TESTING"] = True
     with app_module.app.test_client() as c:
         resp = c.post("/predict/sample", data={"mode": "quick"})

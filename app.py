@@ -32,19 +32,9 @@ SETUP
 5. Open http://127.0.0.1:5000
 
 The app never assumes a specific architecture: it inspects the loaded
-model to find its input size and its last convolutional layer, so the
-same code works for the Xception/EfficientNet/MobileNet variants
-mentioned in the project proposal.
-
-A note on one deliberate difference from the notebook: the notebook
-builds the Grad-CAM helper model with `tf.keras.models.Model([model.inputs], ...)`
-— inputs wrapped in an extra list. On some TensorFlow/Keras versions that
-double-wrapping is tolerated; on others it corrupts the model's returned
-outputs and crashes. This file uses `tf.keras.models.Model(model.inputs, ...)`
-(no extra wrapping) instead — the same computation, just without that
-version-dependent landmine. Everything else (the Grad-CAM/Score-CAM math,
-the LIME settings, the 4-panel figure, the overlap/IoU/Spearman analysis)
-mirrors the notebook's final pipeline exactly.
+model to find its input size and last convolutional layer, so the same
+code works for the Xception/EfficientNet/MobileNet variants mentioned in
+the project proposal.
 """
 
 from skimage.segmentation import quickshift, mark_boundaries
@@ -60,6 +50,7 @@ import base64
 import io
 import os
 import random
+import threading
 from glob import glob
 
 import cv2
@@ -100,10 +91,43 @@ _lime_explainer = lime_image.LimeImageExplainer()
 
 
 def _find_last_conv_layer(m):
+    """Pick the Grad-CAM/Score-CAM target layer the same way the thesis
+    notebook's final pipeline does (`pick_last_conv_name`), NOT by layer
+    *type*. This matters: for Xception it resolves to
+    `block14_sepconv2_act` (the ReLU after the last separable conv's
+    BatchNorm) rather than `block14_sepconv2` itself, because the matching
+    is done on substrings of the layer *name* ("conv"/"sepconv"), and
+    "sepconv" also appears inside "..._sepconv2_act". An earlier,
+    type-based version of this function (`isinstance(layer, (Conv2D,
+    SeparableConv2D))`) picked the wrong layer and produced heatmaps/IoU/
+    Spearman values that didn't match the thesis figures or Tables 4.8-4.9.
+
+    Falls back to the simpler type-based match only if no 4D-output layer
+    has "conv"/"sepconv" in its name at all (e.g. a non-Xception-style
+    architecture), to avoid ever raising on an otherwise-working model.
+    """
+    candidates = []
+    for layer in m.layers:
+        try:
+            shape = tf.TensorShape(layer.output.shape)
+        except (AttributeError, ValueError):
+            continue
+        if shape.rank == 4:
+            candidates.append(layer.name)
+
+    for name in reversed(candidates):
+        low = name.lower()
+        if "conv" in low or "sepconv" in low:
+            return name
+
+    if candidates:
+        return candidates[-1]
+
+    # Last-resort fallback: original type-based search.
     for layer in reversed(m.layers):
         if isinstance(layer, (tf.keras.layers.Conv2D, tf.keras.layers.SeparableConv2D)):
             return layer.name
-    raise ValueError("No Conv2D/SeparableConv2D layer found in the model.")
+    raise ValueError("No 4D feature-map layer found in the model.")
 
 
 def load_asd_model():
@@ -134,6 +158,35 @@ def model_ready():
     return _model is not None
 
 
+_model_load_lock = threading.Lock()
+_model_load_attempted = False
+
+
+def ensure_model_loaded():
+    """Load the model on first use if it isn't already.
+
+    `if __name__ == "__main__":` only runs when the file is executed
+    directly (`python app.py`). Under a production server such as
+    `gunicorn app:app`, the module is only *imported* — that block never
+    runs, so without this, the model would silently never load and every
+    request would fail. Flask's `before_request` calls this on the first
+    incoming request regardless of how the app was started.
+    """
+    global _model_load_attempted
+    if _model is not None:
+        return
+    with _model_load_lock:
+        if _model is not None or _model_load_attempted:
+            return
+        _model_load_attempted = True
+        load_asd_model()
+
+
+@app.before_request
+def _load_model_before_first_request():
+    ensure_model_loaded()
+
+
 # --------------------------------------------------------------------------
 # Pre/post-processing helpers
 # --------------------------------------------------------------------------
@@ -143,7 +196,11 @@ def load_preprocess(path_or_bytes):
         pil = Image.open(io.BytesIO(path_or_bytes)).convert("RGB")
     else:
         pil = Image.open(path_or_bytes).convert("RGB")
-    pil_resized = pil.resize((_img_w, _img_h))
+    # Keras's `load_img` (used throughout the thesis notebook) defaults to
+    # nearest-neighbor resizing. Match it explicitly so uploaded/sample
+    # images get the same input pixels the model was trained and
+    # evaluated on, rather than relying on PIL's own (different) default.
+    pil_resized = pil.resize((_img_w, _img_h), resample=Image.NEAREST)
     arr = np.asarray(pil_resized).astype("float32") / 255.0
     return pil_resized, arr
 
@@ -334,6 +391,70 @@ def lime_saliency_map(pred_id, explanation):
     for sp_id, weight in local_exp.items():
         w[seg == sp_id] = weight
     return _norm01(np.maximum(w, 0))
+
+
+# --------------------------------------------------------------------------
+# Deletion/Insertion faithfulness AUC
+# (notebook section 10 — thesis Table 4.7: 31x31 average-pool blur
+# baseline, 30-step deletion/insertion curves, trapezoidal AUC)
+# --------------------------------------------------------------------------
+def blur_baseline(arr01, k=31):
+    """Simple box-blur baseline (average pooling), matching the notebook's
+    `blur_baseline` exactly — this is what deleted/un-inserted pixels get
+    replaced with, instead of e.g. plain black or grey."""
+    x = tf.convert_to_tensor(arr01[None, ...], dtype=tf.float32)
+    x = tf.nn.avg_pool2d(x, ksize=k, strides=1, padding="SAME")
+    return x[0].numpy()
+
+
+def deletion_insertion_curves(arr01, sal01, class_index, steps=30):
+    """Deletion: start from the original image, progressively replace the
+    most-salient pixels with the blurred baseline — the predicted
+    probability should fall. Insertion: the reverse, starting from the
+    baseline and progressively restoring the most-salient original
+    pixels — the probability should rise. Returns (del_probs, ins_probs),
+    each of length steps+1.
+
+    This reproduces the notebook's `deletion_insertion_curves` exactly,
+    but computes all steps as one batched model call per curve instead of
+    `2 * (steps+1)` sequential single-image calls: each step's image only
+    depends on which pixels fall within that step's top-k-salient set
+    (not on any previous step's image), so the two are numerically
+    identical — this is purely a speed optimisation.
+    """
+    h, w, _ = arr01.shape
+    total = h * w
+    sal_flat = sal01.ravel()
+    order = np.argsort(-sal_flat)  # most salient first
+
+    rank = np.empty(total, dtype=np.int64)
+    rank[order] = np.arange(total)
+    rank2d = rank.reshape(h, w)
+
+    base = blur_baseline(arr01, k=31)
+    orig = arr01
+
+    k_values = [int((s / steps) * total) for s in range(steps + 1)]
+    # mask[s, y, x] True where pixel (y, x) is among the top-k_s most salient
+    masks = rank2d[None, ...] < np.array(k_values)[:, None, None]
+    masks = masks[..., None]  # broadcast over channel dim
+
+    del_imgs = np.where(masks, base[None, ...], orig[None, ...]).astype(np.float32)
+    ins_imgs = np.where(masks, orig[None, ...], base[None, ...]).astype(np.float32)
+
+    del_probs = _model.predict(del_imgs, verbose=0)[:, class_index]
+    ins_probs = _model.predict(ins_imgs, verbose=0)[:, class_index]
+    return del_probs.astype(np.float32), ins_probs.astype(np.float32)
+
+
+def auc_trapz(y):
+    """Trapezoidal AUC over a uniform [0, 1] x-grid, matching the
+    notebook's `auc_trapz`. Uses `np.trapezoid` rather than the notebook's
+    `np.trapz` — the same computation under NumPy's newer, non-deprecated
+    name (`np.trapz` still works but warns under NumPy 2.x)."""
+    x = np.linspace(0, 1, len(y), dtype=np.float32)
+    trapezoid = getattr(np, "trapezoid", None) or np.trapz
+    return float(trapezoid(y, x))
 
 
 # --------------------------------------------------------------------------
@@ -593,6 +714,15 @@ def explain_image(image_bytes, mode="quick", true_label_display=None):
             f"Conf: {conf:.3f} | Probs: [Non_Autistic={probs[0]:.3f}, Autistic={probs[1]:.3f}]"
         )
         result["panel_4_image"] = build_4panel_figure(rgb01, overlay_grad, overlay_score, lime_img, header)
+
+        g_del, g_ins = deletion_insertion_curves(arr01, heat_grad, pred_id, steps=30)
+        s_del, s_ins = deletion_insertion_curves(arr01, heat_score, pred_id, steps=30)
+        result["faithfulness"] = {
+            "GradCAM_DeletionAUC": round(auc_trapz(g_del), 4),
+            "GradCAM_InsertionAUC": round(auc_trapz(g_ins), 4),
+            "ScoreCAM_DeletionAUC": round(auc_trapz(s_del), 4),
+            "ScoreCAM_InsertionAUC": round(auc_trapz(s_ins), 4),
+        }
 
         gs_img, iou_gs, sp_gs = build_overlap_figure(
             rgb01, heat_grad, heat_score, "Grad-CAM ROI", "Score-CAM ROI", header

@@ -72,3 +72,12 @@ def client(loaded_app):
     loaded_app.app.config["TESTING"] = True
     with loaded_app.app.test_client() as c:
         yield c
+
+
+@pytest.fixture(autouse=True)
+def _reset_lazy_load_flag(monkeypatch):
+    """`app.ensure_model_loaded()` (the gunicorn lazy-load fix) only
+    attempts a load once, tracked by a module-level flag. Reset it before
+    every test so one test's before_request pass can't suppress another
+    test's expectations depending on execution order."""
+    monkeypatch.setattr(app_module, "_model_load_attempted", False)
