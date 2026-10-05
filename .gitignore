@@ -4,6 +4,7 @@ models/*
 !models/PUT_MODEL_HERE.txt
 data/test/*
 reproduce_images/*
+!reproduce_images/PUT_REPRODUCE_IMAGES_HERE.txt
 !data/test/PUT_TEST_IMAGES_HERE.txt
 static/uploads/*
 !static/uploads/.gitkeep
