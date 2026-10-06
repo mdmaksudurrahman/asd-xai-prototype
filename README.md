@@ -84,7 +84,7 @@ If the model file is missing, the app still starts and shows a setup message ins
 ## Using the app
 
 - **Try a sample.** The primary button picks a random image from `data/test/`. Sample images always have their eyes pixelated in the display.
-- **Upload a photo.** Drag one onto the upload area or click it. Uploads are not pixelated unless the request opts in (`blur_eyes=true`).
+- **Upload a photo.** Drag one onto the upload area or click it. Uploads are not pixelated unless you tick **Blur the eyes in the displayed images** before choosing the photo (the model still analyses the unblurred photo). Photos the face check refuses get a clear explanation instead of a result.
 - **Analysis tiers.** Every analysis starts as *quick*. Follow-up buttons upgrade the same image:
 
 | Tier | Methods | Typical time on CPU |
@@ -216,9 +216,10 @@ reports/                   NOT in git: generated validation reports
 - Face check, crop and region analysis, with the eye-band privacy display.
 - Lab-validation report, the About page, and the research banner on every page.
 
+- A front end that shows the face-check rejections, privacy caption, off-face and tilt warnings, region figure, faithfulness table and an opt-in eye-blur switch.
+
 **Planned**
 
-- Front-end display of the newer results: off-face warning, region figure, privacy caption, tilt and crop notices, and an opt-in eye-blur switch for uploads.
 - A curated set of 10 demo images with pre-computed reports.
 - Hosting: a production server, a background job with a progress bar for the full tier, metadata-only logging, and password protection.
 - Dataset-artefact checks (near-duplicate images between training and test, background-only and face-only tests).
