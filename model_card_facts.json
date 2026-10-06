@@ -1,0 +1,12 @@
+{
+    "_help": "Edit the null fields below with plain text; they appear on the About page. null (or empty) shows 'To be completed'. intended_use and limitations fall back to built-in defaults when null. Keys starting with _ are ignored.",
+    "dataset_name": null,
+    "dataset_source": null,
+    "training_set_size": null,
+    "class_balance": null,
+    "data_split": null,
+    "augmentation": null,
+    "training_notes": null,
+    "intended_use": null,
+    "limitations": null
+}

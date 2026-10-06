@@ -3,12 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Facial-Image ASD Screening — Explainable AI Prototype</title>
+<title>Facial-Image ASD Analysis — Explainable AI Research Prototype</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='banner.css') }}">
 </head>
 <body>
+
+{% include '_banner.html' %}
 
 <header class="masthead no-print">
   <div class="masthead__mark">
@@ -20,7 +23,7 @@
     </svg>
   </div>
   <div class="masthead__text">
-    <h1>Facial-Image ASD Screening</h1>
+    <h1>Facial-Image ASD Analysis</h1>
     <p>Explainable AI research prototype — deep-learning detection with visual, region-level reasoning</p>
   </div>
 </header>
@@ -196,9 +199,7 @@
       </div>
 
       <p class="disclaimer">
-        Research prototype output — a screening aid, not a clinical diagnosis.
-        Any concern about a child's development should be discussed with a
-        qualified clinician.
+        {{ result_disclaimer }}
       </p>
     </div>
 

@@ -6,6 +6,9 @@ data/test/*
 reproduce_images/*
 !reproduce_images/PUT_REPRODUCE_IMAGES_HERE.txt
 !data/test/PUT_TEST_IMAGES_HERE.txt
+reports/
+tools/calibration_output.csv
+tools/reproduce_thesis_tables_output.csv
 static/uploads/*
 !static/uploads/.gitkeep
 

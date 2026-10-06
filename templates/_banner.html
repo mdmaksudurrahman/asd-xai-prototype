@@ -1,0 +1,6 @@
+<div class="research-banner" role="note" aria-label="Research prototype notice">
+  <span class="research-banner__text">{{ research_banner }}</span>
+  {% if request.endpoint != 'about' %}
+  <a class="research-banner__link" href="{{ url_for('about') }}">About this model</a>
+  {% endif %}
+</div>

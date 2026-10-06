@@ -117,7 +117,11 @@
       const res = await fetch(url, { method: "POST", body: form });
       const data = await res.json();
       if (!res.ok) {
-        showError(data.error || "Something went wrong.");
+        // A rejected image (422, from the Part B face check) has a
+        // `message` field, not `error` — check that first so the actual
+        // reason ("No face found...", "More than one face...", etc.)
+        // shows up instead of the generic fallback text.
+        showError(data.message || data.error || "Something went wrong.");
         return;
       }
       finishLoadingSteps();

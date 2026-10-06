@@ -1,0 +1,29 @@
+/* Research-prototype notice shown at the top of every page (Task 6).
+   Deliberately NOT hidden when printing, so a printed report carries it. */
+.research-banner {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+    align-items: baseline;
+    justify-content: center;
+    padding: 0.55rem 1rem;
+    background: #fff4d6;
+    color: #5c3b00;
+    border-bottom: 1px solid #e6c97a;
+    font: 500 0.875rem/1.4 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    text-align: center;
+}
+
+.research-banner__link {
+    color: inherit;
+    text-decoration: underline;
+    white-space: nowrap;
+}
+
+@media print {
+    .research-banner {
+        background: #fff;
+        color: #000;
+        border: 1px solid #888;
+    }
+}

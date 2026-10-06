@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>About this model — Facial-Image ASD Analysis (Research Prototype)</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ url_for('static', filename='banner.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='about.css') }}">
+</head>
+<body class="about-page">
+
+{% include '_banner.html' %}
+
+<header class="about-header">
+  <p class="about-back"><a href="{{ url_for('index') }}">&larr; Back to the prototype</a></p>
+  <h1>About this model</h1>
+  <p class="about-lede">Model card for the Facial-Image ASD Analysis research prototype.</p>
+</header>
+
+<main class="about">
+
+  <section>
+    <h2>Intended use</h2>
+    <p>{{ facts.intended_use }}</p>
+  </section>
+
+  <section>
+    <h2>The model</h2>
+    <dl class="facts">
+      <dt>Architecture</dt>
+      <dd>Xception convolutional neural network</dd>
+      <dt>Task</dt>
+      <dd>Classifies a single facial image as Autistic or Non-Autistic</dd>
+      <dt>Input</dt>
+      <dd>{{ model.input_size }} RGB image, pixel values divided by 255</dd>
+      <dt>Model file</dt>
+      <dd><code>{{ model.file }}</code>{% if model.size_mb %} ({{ model.size_mb }} MB){% endif %}</dd>
+      <dt>SHA-256</dt>
+      <dd>{% if model.sha256 %}<code class="hash">{{ model.sha256 }}</code>{% else %}Model file not found on this server.{% endif %}</dd>
+      <dt>Explanation layer</dt>
+      <dd>{% if model.gradcam_layer %}<code>{{ model.gradcam_layer }}</code>{% else %}Available once the model is loaded.{% endif %}</dd>
+    </dl>
+  </section>
+
+  <section>
+    <h2>Training data</h2>
+    {% if training_facts_filled %}
+    <dl class="facts">
+      <dt>Dataset</dt><dd>{{ fact_rows.dataset_name }}</dd>
+      <dt>Source</dt><dd>{{ fact_rows.dataset_source }}</dd>
+      <dt>Training set size</dt><dd>{{ fact_rows.training_set_size }}</dd>
+      <dt>Class balance</dt><dd>{{ fact_rows.class_balance }}</dd>
+      <dt>Data split</dt><dd>{{ fact_rows.data_split }}</dd>
+      <dt>Augmentation</dt><dd>{{ fact_rows.augmentation }}</dd>
+      <dt>Training notes</dt><dd>{{ fact_rows.training_notes }}</dd>
+    </dl>
+    {% else %}
+    <p class="notice">Training details (dataset, size, split and augmentation) have not been added yet. {{ placeholder }}</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Measured performance</h2>
+    {% if performance.state in ('ok', 'partial') %}
+      <p>Measured by running {{ performance.n }} held-out test images through this application's own
+      prediction code (nearest-neighbour resize to {{ model.input_size }}, pixel values divided by 255,
+      no face-check filtering).{% if performance.measured_at %} Measured on {{ performance.measured_at[:10] }}.{% endif %}</p>
+      {% if performance.message %}<p class="notice">{{ performance.message }}</p>{% endif %}
+      <table class="metrics">
+        <tbody>
+        {% for label, value in performance.rows %}
+          <tr><th scope="row">{{ label }}</th><td>{{ value }}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% if performance.confusion_matrix %}
+      <table class="confusion">
+        <caption>Confusion matrix (rows = true class, columns = predicted class)</caption>
+        <thead><tr><th></th><th>Predicted Non-Autistic</th><th>Predicted Autistic</th></tr></thead>
+        <tbody>
+          <tr><th scope="row">True Non-Autistic</th><td>{{ performance.confusion_matrix[0][0] }}</td><td>{{ performance.confusion_matrix[0][1] }}</td></tr>
+          <tr><th scope="row">True Autistic</th><td>{{ performance.confusion_matrix[1][0] }}</td><td>{{ performance.confusion_matrix[1][1] }}</td></tr>
+        </tbody>
+      </table>
+      {% endif %}
+    {% else %}
+      <p class="notice">{{ performance.message }}</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>How the explanations are produced</h2>
+    <table class="settings">
+      <tbody>
+      {% for label, value in xai_rows %}
+        <tr><th scope="row">{{ label }}</th><td>{{ value }}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Privacy</h2>
+    <ul>
+      <li>Uploaded photos are processed in memory and are not saved by this application.</li>
+      <li>Sample images from the test set are shown with the eye region pixelated. The model and the explanation methods always analyse the original image; only the displayed copy is blurred.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Limitations</h2>
+    <ul>
+      {% for item in facts.limitations %}<li>{{ item }}</li>{% endfor %}
+    </ul>
+  </section>
+
+</main>
+
+<footer class="about-footer">
+  <p>{{ research_banner }}</p>
+</footer>
+
+</body>
+</html>
