@@ -8,6 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 <link rel="stylesheet" href="{{ url_for('static', filename='banner.css') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='results-extra.css') }}">
 </head>
 <body>
 
@@ -60,6 +61,13 @@
       <p class="dropzone__meta">JPG, PNG, BMP or WEBP — up to 12&nbsp;MB. Analysis starts right away.</p>
     </div>
 
+    <label class="blur-toggle" for="blurEyesToggle">
+      <input type="checkbox" id="blurEyesToggle">
+      <span>Blur the eyes in the displayed images
+        <small>Your photo is still analysed unblurred; only what is shown is blurred. Set this before choosing a photo.</small>
+      </span>
+    </label>
+
     <section class="history no-print" aria-label="This session">
       <h3>This session</h3>
       <p id="historyEmpty" class="history__empty">Results you analyse will appear here so you can compare them.</p>
@@ -84,12 +92,31 @@
 
     <div id="errorState" class="error-state no-print" hidden></div>
 
+    <div id="rejectedState" class="rejected-state no-print" role="alert" hidden>
+      <h3>We couldn't analyse this photo</h3>
+      <p id="rejectedMessage" class="rejected-state__message"></p>
+      <p id="rejectedSampleNote" class="rejected-state__sample" hidden>
+        Test image <code id="rejectedFilename"></code> — the face check did not accept it.
+      </p>
+      <h4>What works best</h4>
+      <ul>
+        <li>One face, looking towards the camera</li>
+        <li>Even lighting, without heavy shadows</li>
+        <li>The face large and sharp in the frame</li>
+        <li>A level photo, not tilted</li>
+      </ul>
+      <button id="tryAnotherBtn" class="btn btn--secondary" hidden>Try another test image</button>
+    </div>
+
     <div id="resultState" class="result-state" hidden>
 
       <div id="noFaceBanner" class="warning-banner" hidden>
         No face was clearly detected in this image. The prediction and heatmap
         below may not be reliable — try a clearer, front-facing, well-lit photo.
       </div>
+
+      <div id="offFaceWarning" class="notice notice--warn" role="alert" hidden></div>
+      <div id="tiltNotice" class="notice notice--info" hidden></div>
 
       <div class="result-header">
         <div>
@@ -102,7 +129,7 @@
         </div>
       </div>
       <p id="lowConfNote" class="low-conf-note" hidden>
-        Low confidence — consider a repeat scan with a clearer photo, or a clinician follow-up.
+        Low confidence — the model is unsure about this image. Try a clearer, front-facing photo.
       </p>
 
       <div class="prob-bars">
@@ -134,6 +161,10 @@
           <span class="legend__label">More influence</span>
         </div>
       </div>
+
+      <p id="privacyCaption" class="privacy-caption" hidden></p>
+      <p id="cropNotice" class="small-note" hidden>The photo was cropped around the face to match the framing of the test images.</p>
+      <p id="fallbackNotice" class="small-note" hidden>Basic face detection was used for this photo, so the detailed region breakdown and some checks were not available.</p>
 
       <div id="scorecamBlock" class="scorecam-block" hidden>
         <figure>
@@ -181,6 +212,32 @@
         </div>
       </div>
 
+      <div id="regionBlock" class="region-block" hidden>
+        <h3>Where the model looked, by facial region</h3>
+        <figure>
+          <img id="imgRegions" alt="The face divided into approximate regions, with a bar chart of the share of the model's attention in each region">
+          <figcaption>Regions are approximate, built from five facial landmarks.</figcaption>
+        </figure>
+      </div>
+
+      <p class="region-summary" id="regionSummary"></p>
+
+      <div id="faithfulnessBlock" class="faith-block" hidden>
+        <h3>How faithful are the explanations?</h3>
+        <p class="faith-block__hint">
+          Pixels are removed (deletion) or restored (insertion) in order of importance. A faithful map
+          makes the prediction fall quickly under deletion (lower is better) and rise quickly under
+          insertion (higher is better).
+        </p>
+        <table class="faith-table">
+          <thead><tr><th></th><th>Deletion AUC (lower is better)</th><th>Insertion AUC (higher is better)</th></tr></thead>
+          <tbody>
+            <tr><th scope="row">Grad-CAM</th><td id="faithGradDel">—</td><td id="faithGradIns">—</td></tr>
+            <tr><th scope="row">Score-CAM</th><td id="faithScoreDel">—</td><td id="faithScoreIns">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+
       <div class="tier-actions no-print">
         <button id="crossCheckBtn" class="btn btn--secondary">
           Run a cross-check (Score-CAM)
@@ -192,7 +249,6 @@
         </button>
       </div>
 
-      <p class="region-summary" id="regionSummary"></p>
 
       <div class="result-actions no-print">
         <button id="printBtn" class="btn-text">Download this result as a report</button>

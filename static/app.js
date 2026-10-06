@@ -3,16 +3,22 @@
   const sampleBtn = document.getElementById("sampleBtn");
   const dropzone = document.getElementById("dropzone");
   const fileInput = document.getElementById("fileInput");
+  const blurToggle = document.getElementById("blurEyesToggle");
   const resetBtn = document.getElementById("resetBtn");
   const crossCheckBtn = document.getElementById("crossCheckBtn");
   const fullReportBtn = document.getElementById("fullReportBtn");
   const printBtn = document.getElementById("printBtn");
   const blendSlider = document.getElementById("blendSlider");
+  const tryAnotherBtn = document.getElementById("tryAnotherBtn");
 
   const emptyState = document.getElementById("emptyState");
   const loadingState = document.getElementById("loadingState");
   const loadingSteps = document.getElementById("loadingSteps");
   const errorState = document.getElementById("errorState");
+  const rejectedState = document.getElementById("rejectedState");
+  const rejectedMessage = document.getElementById("rejectedMessage");
+  const rejectedSampleNote = document.getElementById("rejectedSampleNote");
+  const rejectedFilename = document.getElementById("rejectedFilename");
   const resultState = document.getElementById("resultState");
 
   const historyStrip = document.getElementById("historyStrip");
@@ -22,13 +28,20 @@
   let seq = 0;
   const history = [];          // [{id, data, context}]
   let activeId = null;
-  let currentContext = null;   // {mode: "upload"|"sample", file, filename}
+  let currentContext = null;   // {mode: "upload"|"sample", file, filename, blurEyes}
 
   const STEP_LABELS = {
-    quick: ["Reading the image", "Running the classifier", "Generating the Grad-CAM explanation"],
-    cross_check: ["Reading the image", "Running the classifier", "Generating the Grad-CAM explanation", "Cross-checking with Score-CAM"],
+    quick: ["Reading the image", "Checking the face", "Running the classifier", "Generating the Grad-CAM explanation"],
+    cross_check: [
+      "Reading the image",
+      "Checking the face",
+      "Running the classifier",
+      "Generating the Grad-CAM explanation",
+      "Cross-checking with Score-CAM",
+    ],
     full: [
       "Reading the image",
+      "Checking the face",
       "Running the classifier",
       "Generating the Grad-CAM explanation",
       "Cross-checking with Score-CAM",
@@ -36,13 +49,10 @@
       "Comparing all three methods",
     ],
   };
-  // Rough timing (ms) for when each step should appear to start — a UI
-  // approximation to keep a long wait from looking frozen, not telemetry
-  // from the server. "full" mode's LIME step is intentionally the longest.
   const STEP_TIMING = {
-    quick: [0, 300, 900],
-    cross_check: [0, 300, 900, 3500],
-    full: [0, 300, 900, 3500, 8000, 30000],
+    quick: [0, 250, 600, 1100],
+    cross_check: [0, 250, 600, 1100, 3500],
+    full: [0, 250, 600, 1100, 3500, 8000, 30000],
   };
 
   // ================================================================
@@ -51,6 +61,16 @@
   sampleBtn.addEventListener("click", () => {
     runAnalysis({ mode: "sample", filename: null }, "quick");
   });
+
+  tryAnotherBtn.addEventListener("click", () => {
+    runAnalysis({ mode: "sample", filename: null }, "quick");
+  });
+
+  function startUpload(file) {
+    // The eye-blur choice is remembered with the upload, so follow-up
+    // analyses (cross-check, full report) of the same photo keep it.
+    runAnalysis({ mode: "upload", file, blurEyes: blurToggle.checked }, "quick");
+  }
 
   dropzone.addEventListener("click", () => fileInput.click());
   dropzone.addEventListener("keydown", (e) => {
@@ -73,11 +93,11 @@
   );
   dropzone.addEventListener("drop", (e) => {
     const file = e.dataTransfer.files[0];
-    if (file) runAnalysis({ mode: "upload", file }, "quick");
+    if (file) startUpload(file);
   });
   fileInput.addEventListener("change", () => {
-    if (fileInput.files[0]) runAnalysis({ mode: "upload", file: fileInput.files[0] }, "quick");
-    fileInput.value = ""; // allow re-selecting the same file later
+    if (fileInput.files[0]) startUpload(fileInput.files[0]);
+    fileInput.value = "";
   });
 
   crossCheckBtn.addEventListener("click", () => {
@@ -109,6 +129,7 @@
     if (context.mode === "upload") {
       url = "/predict/upload";
       form.append("image", context.file);
+      if (context.blurEyes) form.append("blur_eyes", "true");
     } else if (context.filename) {
       form.append("filename", context.filename);
     }
@@ -116,18 +137,21 @@
     try {
       const res = await fetch(url, { method: "POST", body: form });
       const data = await res.json();
+
+      // 422 = the face check refused the photo before any analysis.
+      if (res.status === 422 && data.rejected) {
+        showRejected(data);
+        return;
+      }
       if (!res.ok) {
-        // A rejected image (422, from the Part B face check) has a
-        // `message` field, not `error` — check that first so the actual
-        // reason ("No face found...", "More than one face...", etc.)
-        // shows up instead of the generic fallback text.
         showError(data.message || data.error || "Something went wrong.");
         return;
       }
+
       finishLoadingSteps();
-      // Remember the exact sample filename so a follow-up tier re-analyses
-      // this same image rather than drawing a new random one.
-      if (context.mode === "sample") currentContext = { mode: "sample", filename: data.filename };
+      if (context.mode === "sample") {
+        currentContext = { mode: "sample", filename: data.filename };
+      }
 
       if (opts.updateExisting && activeId !== null) {
         const entry = history.find((h) => h.id === activeId);
@@ -142,14 +166,20 @@
   }
 
   // ================================================================
-  // Loading state (staged, approximate progress)
+  // View states
   // ================================================================
   let stepTimers = [];
 
-  function showLoading(mode) {
+  function hideAllStates() {
     emptyState.hidden = true;
+    loadingState.hidden = true;
     errorState.hidden = true;
+    rejectedState.hidden = true;
     resultState.hidden = true;
+  }
+
+  function showLoading(mode) {
+    hideAllStates();
     loadingState.hidden = false;
     resetBtn.hidden = false;
 
@@ -186,18 +216,33 @@
 
   function showError(msg) {
     clearStepTimers();
-    loadingState.hidden = true;
-    resultState.hidden = true;
-    emptyState.hidden = true;
+    hideAllStates();
     errorState.hidden = false;
     errorState.textContent = msg;
   }
 
+  // A photo the face check refused. Not an error: it is the app working as
+  // designed, so it gets its own calm panel with advice instead of red text.
+  function showRejected(data) {
+    clearStepTimers();
+    hideAllStates();
+
+    const isSample = data.source === "sample";
+    rejectedMessage.textContent = data.message || "This photo could not be analysed.";
+    rejectedSampleNote.hidden = !isSample;
+    rejectedFilename.textContent = isSample ? data.filename || "" : "";
+    tryAnotherBtn.hidden = !isSample;
+
+    rejectedState.hidden = false;
+    resetBtn.hidden = false;
+    currentContext = null;
+    activeId = null;
+    renderHistory();
+  }
+
   function resetToEmpty() {
     clearStepTimers();
-    loadingState.hidden = true;
-    errorState.hidden = true;
-    resultState.hidden = true;
+    hideAllStates();
     emptyState.hidden = false;
     resetBtn.hidden = true;
     activeId = null;
@@ -214,10 +259,24 @@
     return "quick";
   }
 
+  // Show `text` in element `el`, or hide the element when there is none.
+  // Always textContent: server text is never interpreted as HTML.
+  function setNotice(el, text) {
+    if (text) {
+      el.textContent = text;
+      el.hidden = false;
+    } else {
+      el.textContent = "";
+      el.hidden = true;
+    }
+  }
+
+  function fmt3(v) {
+    return typeof v === "number" ? v.toFixed(3) : "—";
+  }
+
   function showResult(data) {
-    loadingState.hidden = true;
-    errorState.hidden = true;
-    emptyState.hidden = true;
+    hideAllStates();
     resultState.hidden = false;
     resetBtn.hidden = false;
 
@@ -231,6 +290,12 @@
     document.getElementById("lowConfNote").hidden = data.confidence_tier !== "low";
 
     document.getElementById("noFaceBanner").hidden = data.face_detected !== false;
+
+    // Warnings and notes from the face check and the region analysis
+    setNotice(document.getElementById("offFaceWarning"), data.off_face_warning);
+    setNotice(document.getElementById("tiltNotice"), data.tilt_warning ? data.tilt_message : null);
+    document.getElementById("cropNotice").hidden = data.face_cropped !== true;
+    document.getElementById("fallbackNotice").hidden = data.face_detector_used_fallback !== true;
 
     document.getElementById("probNon").textContent = `${data.prob_non_autistic}%`;
     document.getElementById("probAsd").textContent = `${data.prob_autistic}%`;
@@ -253,7 +318,9 @@
     gradImg.src = data.gradcam_image;
     gradImg.style.opacity = blendSlider.value / 100;
 
-    // Score-CAM
+    // Privacy: shown under every image whose eyes were pixelated
+    setNotice(document.getElementById("privacyCaption"), data.eyes_blurred ? data.privacy_caption : null);
+
     const scBlock = document.getElementById("scorecamBlock");
     if (data.scorecam_image) {
       scBlock.hidden = false;
@@ -262,7 +329,6 @@
       scBlock.hidden = true;
     }
 
-    // LIME
     const limeBlock = document.getElementById("limeBlock");
     if (data.lime_image) {
       limeBlock.hidden = false;
@@ -271,7 +337,6 @@
       limeBlock.hidden = true;
     }
 
-    // 4-panel comparison figure
     const panel4Block = document.getElementById("panel4Block");
     if (data.panel_4_image) {
       panel4Block.hidden = false;
@@ -280,7 +345,6 @@
       panel4Block.hidden = true;
     }
 
-    // Cross-method overlap / agreement grid
     const overlapBlock = document.getElementById("overlapBlock");
     if (data.overlap) {
       overlapBlock.hidden = false;
@@ -298,12 +362,32 @@
       overlapBlock.hidden = true;
     }
 
-    // Tier action buttons: only offer tiers beyond the current one
+    // Region analysis: outlines + bar chart, then the plain-language summary
+    const regionBlock = document.getElementById("regionBlock");
+    if (data.region_figure_image) {
+      regionBlock.hidden = false;
+      document.getElementById("imgRegions").src = data.region_figure_image;
+    } else {
+      regionBlock.hidden = true;
+    }
+    document.getElementById("regionSummary").textContent = data.region_summary;
+
+    // Faithfulness (full report only)
+    const faithBlock = document.getElementById("faithfulnessBlock");
+    const f = data.faithfulness;
+    if (f) {
+      faithBlock.hidden = false;
+      document.getElementById("faithGradDel").textContent = fmt3(f.GradCAM_DeletionAUC);
+      document.getElementById("faithGradIns").textContent = fmt3(f.GradCAM_InsertionAUC);
+      document.getElementById("faithScoreDel").textContent = fmt3(f.ScoreCAM_DeletionAUC);
+      document.getElementById("faithScoreIns").textContent = fmt3(f.ScoreCAM_InsertionAUC);
+    } else {
+      faithBlock.hidden = true;
+    }
+
     const tier = tierOf(data);
     crossCheckBtn.hidden = tier !== "quick";
     fullReportBtn.hidden = tier === "full";
-
-    document.getElementById("regionSummary").textContent = data.region_summary;
   }
 
   // ================================================================
@@ -325,7 +409,10 @@
       const btn = document.createElement("button");
       btn.className = "history__item" + (entry.id === activeId ? " history__item--active" : "");
       btn.title = `${entry.data.prediction} · ${entry.data.confidence}%`;
-      btn.innerHTML = `<img src="${entry.data.gradcam_image}" alt="">`;
+      const thumb = document.createElement("img");
+      thumb.src = entry.data.gradcam_image;
+      thumb.alt = "";
+      btn.appendChild(thumb);
       btn.addEventListener("click", () => {
         activeId = entry.id;
         currentContext = entry.context;
