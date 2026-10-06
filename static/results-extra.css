@@ -1,0 +1,141 @@
+/* Styles for the result elements added in Part B/C/D: notices, privacy
+   caption, rejected-photo panel, eye-blur toggle, region and faithfulness
+   blocks. Kept in its own file so style.css is untouched. */
+
+/* ---- Notices --------------------------------------------------------- */
+.notice {
+    margin: 0.75rem 0;
+    padding: 0.65rem 0.9rem;
+    border: 1px solid;
+    border-radius: 6px;
+    font-size: 0.925rem;
+    line-height: 1.45;
+}
+
+/* The orange "most attention is outside the face" warning */
+.notice--warn {
+    background: #fff1e0;
+    border-color: #f0a35c;
+    color: #7a3b00;
+}
+
+.notice--info {
+    background: #eef4fb;
+    border-color: #b8cfe8;
+    color: #23415f;
+}
+
+.privacy-caption {
+    margin: 0.5rem 0 0;
+    font-size: 0.85rem;
+    font-style: italic;
+    color: #4b5563;
+}
+
+.small-note {
+    margin: 0.4rem 0 0;
+    font-size: 0.85rem;
+    color: #4b5563;
+}
+
+/* ---- Opt-in eye blur for uploads ------------------------------------- */
+.blur-toggle {
+    display: flex;
+    gap: 0.55rem;
+    align-items: flex-start;
+    margin: 0.9rem 0 0;
+    font-size: 0.9rem;
+    line-height: 1.4;
+    cursor: pointer;
+}
+
+.blur-toggle input {
+    margin-top: 0.2rem;
+}
+
+.blur-toggle small {
+    display: block;
+    margin-top: 0.15rem;
+    opacity: 0.75;
+}
+
+/* ---- Photo rejected by the face check -------------------------------- */
+.rejected-state {
+    padding: 1.1rem 1.25rem;
+    border: 1px solid #e3c4a0;
+    border-radius: 8px;
+    background: #fff8ef;
+    color: #4a2f10;
+}
+
+.rejected-state h3 {
+    margin: 0 0 0.5rem;
+}
+
+.rejected-state h4 {
+    margin: 1rem 0 0.35rem;
+    font-size: 0.95rem;
+}
+
+.rejected-state__message {
+    margin: 0 0 0.5rem;
+    font-weight: 500;
+}
+
+.rejected-state__sample {
+    margin: 0 0 0.25rem;
+    font-size: 0.9rem;
+    opacity: 0.85;
+}
+
+.rejected-state ul {
+    margin: 0 0 1rem;
+    padding-left: 1.2rem;
+}
+
+/* ---- Region figure and faithfulness table ---------------------------- */
+.region-block,
+.faith-block {
+    margin-top: 1.5rem;
+}
+
+.region-block figure {
+    margin: 0;
+}
+
+.region-block img {
+    max-width: 100%;
+    height: auto;
+}
+
+.region-block figcaption,
+.faith-block__hint {
+    font-size: 0.875rem;
+    opacity: 0.8;
+}
+
+.faith-table {
+    border-collapse: collapse;
+    margin: 0.5rem 0;
+}
+
+.faith-table th,
+.faith-table td {
+    padding: 0.35rem 0.8rem;
+    border: 1px solid rgba(128, 128, 128, 0.35);
+    text-align: left;
+}
+
+.faith-table td {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 600px) {
+
+    .faith-table th,
+    .faith-table td {
+        padding: 0.3rem 0.5rem;
+        font-size: 0.85rem;
+    }
+}
