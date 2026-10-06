@@ -68,7 +68,28 @@ def loaded_app(dummy_model_path, synthetic_test_images, monkeypatch):
 
 
 @pytest.fixture
-def client(loaded_app):
+def client(loaded_app, monkeypatch):
+    """Tests using this fixture mostly aren't testing face-detection
+    itself — they use synthetic random-noise images standing in for
+    real photos, which genuinely contain no detectable face. Default to
+    a single clean, centred, full-frame "face found" so routes behave as
+    if a valid photo was provided. Tests that specifically exercise
+    face-check behaviour (tests/test_face_check_routes.py) monkeypatch
+    face_detection.detect_faces themselves to override this."""
+    import face_detection as face_detection_module
+
+    def _fake_detect_faces(rgb01):
+        h, w = rgb01.shape[:2]
+        det = face_detection_module.FaceDetection(
+            bbox=(0.0, 0.0, float(w), float(h)),
+            score=0.99,
+            right_eye=(w * 0.35, h * 0.4),
+            left_eye=(w * 0.65, h * 0.4),
+        )
+        return [det], False
+
+    monkeypatch.setattr(face_detection_module, "detect_faces", _fake_detect_faces)
+
     loaded_app.app.config["TESTING"] = True
     with loaded_app.app.test_client() as c:
         yield c

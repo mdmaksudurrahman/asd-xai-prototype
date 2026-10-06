@@ -1,0 +1,150 @@
+/* About / model-card page. Self-contained: does not depend on style.css. */
+.about-page {
+    margin: 0;
+    background: #fbfaf7;
+    color: #1d2530;
+    font: 400 1rem/1.6 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.about-header,
+.about,
+.about-footer {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 0 1.25rem;
+}
+
+.about-header {
+    padding-top: 1.5rem;
+}
+
+.about-back {
+    margin: 0 0 0.75rem;
+    font-size: 0.9rem;
+}
+
+.about-back a {
+    color: #2c5282;
+}
+
+.about-header h1 {
+    margin: 0;
+    font: 600 2rem/1.2 "Newsreader", Georgia, serif;
+}
+
+.about-lede {
+    margin: 0.35rem 0 0;
+    color: #4b5563;
+}
+
+.about section {
+    margin-top: 2.25rem;
+}
+
+.about h2 {
+    margin: 0 0 0.75rem;
+    padding-bottom: 0.35rem;
+    border-bottom: 1px solid #d9d4c7;
+    font: 600 1.3rem/1.3 "Newsreader", Georgia, serif;
+}
+
+.facts {
+    display: grid;
+    grid-template-columns: minmax(9rem, 12rem) 1fr;
+    gap: 0.4rem 1.25rem;
+    margin: 0;
+}
+
+.facts dt {
+    font-weight: 600;
+    color: #374151;
+}
+
+.facts dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+}
+
+code {
+    font: 400 0.9em "IBM Plex Mono", ui-monospace, Consolas, monospace;
+    background: #efece4;
+    padding: 0.05rem 0.3rem;
+    border-radius: 3px;
+}
+
+code.hash {
+    font-size: 0.8em;
+    word-break: break-all;
+}
+
+table {
+    border-collapse: collapse;
+    margin: 0.75rem 0;
+}
+
+th,
+td {
+    border: 1px solid #d9d4c7;
+    padding: 0.4rem 0.8rem;
+    text-align: left;
+    vertical-align: top;
+}
+
+thead th,
+th[scope="row"] {
+    background: #f1eee6;
+    font-weight: 600;
+}
+
+.metrics td,
+.confusion td {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.confusion caption {
+    text-align: left;
+    color: #4b5563;
+    font-size: 0.9rem;
+    padding-bottom: 0.3rem;
+}
+
+.settings th {
+    width: 11rem;
+}
+
+.notice {
+    background: #fff4d6;
+    border: 1px solid #e6c97a;
+    border-radius: 6px;
+    padding: 0.6rem 0.9rem;
+    color: #5c3b00;
+}
+
+.about ul {
+    padding-left: 1.25rem;
+}
+
+.about li {
+    margin: 0.35rem 0;
+}
+
+.about-footer {
+    margin-top: 2.5rem;
+    padding-top: 1rem;
+    padding-bottom: 2rem;
+    border-top: 1px solid #d9d4c7;
+    color: #4b5563;
+    font-size: 0.9rem;
+}
+
+@media (max-width: 600px) {
+    .facts {
+        grid-template-columns: 1fr;
+        gap: 0.1rem;
+    }
+
+    .facts dd {
+        margin-bottom: 0.6rem;
+    }
+}

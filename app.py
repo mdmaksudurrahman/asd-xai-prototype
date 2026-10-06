@@ -37,6 +37,11 @@ code works for the Xception/EfficientNet/MobileNet variants mentioned in
 the project proposal.
 """
 
+import wording
+import region_analysis
+import privacy
+import model_card
+import face_detection
 from skimage.segmentation import quickshift, mark_boundaries
 from lime import lime_image
 from tensorflow.keras.models import load_model
@@ -47,6 +52,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 import base64
+import inspect
 import io
 import os
 import random
@@ -65,6 +71,7 @@ matplotlib.use("Agg")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.environ.get("ASD_MODEL_PATH", os.path.join(BASE_DIR, "models", "Xception_best.h5"))
 TEST_DIR = os.environ.get("ASD_TEST_DIR", os.path.join(BASE_DIR, "data", "test"))
+REPORTS_DIR = os.environ.get("ASD_REPORTS_DIR", os.path.join(BASE_DIR, "reports"))
 ALLOWED_EXT = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
 
 ID_TO_LABEL = {0: "Non_Autistic", 1: "Autistic"}
@@ -74,6 +81,8 @@ LABEL_DISPLAY = {"Non_Autistic": "Non-Autistic", "Autistic": "Autistic"}
 # exactly. This is the slow part of "full" mode; lower it (e.g. 500) in your
 # own copy if you want a faster, slightly noisier LIME map.
 LIME_NUM_SAMPLES = 1500
+LIME_NUM_FEATURES = 10  # superpixels drawn in the green/red LIME figure
+LIME_QUICKSHIFT = {"kernel_size": 4, "max_dist": 100, "ratio": 0.2}  # superpixel segmentation
 TOPK_OVERLAP_FRACTION = 0.10  # matches the notebook's top_frac=0.10
 
 app = Flask(__name__)
@@ -245,6 +254,69 @@ def detect_face_bbox(rgb01):
     return (x, y, x + fw, y + fh), True
 
 
+def run_face_check_on_bytes(image_bytes):
+    """Part B / Task 2: run the face check on the image at full size,
+    before any model inference. Returns a dict:
+
+      {"ok": False, "reason": ..., "message": ...}                    -> reject, no analysis
+      {"ok": True, "crop_box": ..., "tilt_warning": ..., ...}         -> proceed, maybe cropped
+
+    `crop_box` is None when no crop is needed (face already fills
+    roughly half the image or more — true for the real 280 test images,
+    confirmed by tools/calibrate_face_crop_margin.py).
+    """
+    if isinstance(image_bytes, (bytes, bytearray)):
+        pil_full = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    else:
+        pil_full = Image.open(image_bytes).convert("RGB")
+    rgb01_full = np.asarray(pil_full).astype("float32") / 255.0
+    img_h_full, img_w_full = rgb01_full.shape[:2]
+
+    detections, used_fallback = face_detection.detect_faces(rgb01_full)
+    check = face_detection.evaluate_face_check(detections, used_fallback)
+
+    if not check.ok:
+        return {"ok": False, "reason": check.reason, "message": check.message}
+
+    crop_box = None
+    if check.detection is not None:
+        crop_box = face_detection.compute_crop_box(check.detection.bbox, img_w_full, img_h_full)
+
+    # Map the face box (and landmarks, if we have them) into the model's
+    # 224x224 input space, so region_analysis's masks line up with the
+    # heatmaps pixel-for-pixel (Part B / Task 3: "so the regions and
+    # heatmap share coordinates"). If no crop was applied, the "effective"
+    # crop is just the whole original image being resized to 224x224.
+    effective_box = crop_box if crop_box is not None else (0, 0, img_w_full, img_h_full)
+
+    def _map(pt):
+        return face_detection.map_point_through_crop(pt, effective_box, _img_w, _img_h)
+
+    det = check.detection
+    fx, fy, fw, fh = det.bbox
+    face_box_224 = _map((fx, fy)) + _map((fx + fw, fy + fh))
+
+    landmarks_224 = None
+    if det.has_landmarks:
+        landmarks_224 = {
+            "right_eye": _map(det.right_eye),
+            "left_eye": _map(det.left_eye),
+            "nose": _map(det.nose),
+            "right_mouth": _map(det.right_mouth),
+            "left_mouth": _map(det.left_mouth),
+        }
+
+    return {
+        "ok": True,
+        "crop_box": crop_box,
+        "tilt_warning": check.tilt_warning,
+        "tilt_message": check.tilt_message,
+        "used_fallback": check.used_fallback,
+        "face_box_224": face_box_224,
+        "landmarks_224": landmarks_224,
+    }
+
+
 def confidence_tier(conf):
     """Map a raw softmax confidence to a plain-language tier for the UI.
 
@@ -354,29 +426,36 @@ def run_lime_explanation(arr01, num_samples=None):
         top_labels=2,
         hide_color=0,
         num_samples=num_samples,
-        segmentation_fn=lambda x: quickshift(x, kernel_size=4, max_dist=100, ratio=0.2),
+        segmentation_fn=lambda x: quickshift(x, **LIME_QUICKSHIFT),
     )
 
 
-def lime_vis(arr01, pred_id, explanation):
-    """Green = superpixels supporting the predicted class; red = contradicting it."""
+def lime_vis(display_base01, arr01, pred_id, explanation):
+    """Green = superpixels supporting the predicted class; red =
+    contradicting it, tinted onto `display_base01` (the image shown to
+    the user — may have its eye band pixelated for sample-image privacy).
+    `arr01` is the real, unaltered image: used only for recomputing the
+    quickshift segmentation boundaries so they match what LIME actually
+    explained — the LIME masks themselves come from `explanation`
+    (already computed from the real image) regardless of which image we
+    tint for display."""
     img_uint8 = (arr01 * 255).astype(np.uint8)
 
     _, mask_pos = explanation.get_image_and_mask(
-        pred_id, positive_only=True, num_features=10, hide_rest=False
+        pred_id, positive_only=True, num_features=LIME_NUM_FEATURES, hide_rest=False
     )
     _, mask_neg = explanation.get_image_and_mask(
-        pred_id, positive_only=False, negative_only=True, num_features=10, hide_rest=False
+        pred_id, positive_only=False, negative_only=True, num_features=LIME_NUM_FEATURES, hide_rest=False
     )
 
     pos = (mask_pos > 0).astype(np.float32)
     neg = (mask_neg > 0).astype(np.float32)
 
-    vis = arr01.copy()
+    vis = display_base01.copy()
     vis[..., 1] = np.clip(vis[..., 1] + 0.60 * pos, 0, 1)
     vis[..., 0] = np.clip(vis[..., 0] + 0.60 * neg, 0, 1)
 
-    seg = quickshift(img_uint8, kernel_size=4, max_dist=100, ratio=0.2)
+    seg = quickshift(img_uint8, **LIME_QUICKSHIFT)
     vis = mark_boundaries(vis, seg, color=(1, 1, 1), mode="thick")
     return np.clip(vis, 0, 1)
 
@@ -666,12 +745,108 @@ def build_3way_overlap_figure(base01, map_g, map_s, map_l, title_prefix, top_fra
     }
 
 
+_REGION_COLORS = {
+    "forehead": "#E8A87C",
+    "eyes": "#6FA3F2",
+    "nose": "#8FE38F",
+    "mouth": "#F27C7C",
+    "rest_of_face": "#D8D86A",
+    "face": "#8FE38F",
+    "outside_face": "#9A9A9A",
+}
+
+
+def build_region_figure(overlay01, masks, percentages, face_box_224, title):
+    """Heatmap overlay with region outlines drawn on it (left) + a bar
+    chart of attention % per region (right). Region boundaries are drawn
+    from the masks directly, so they always match what was actually
+    measured. Never crops/masks the heatmap itself — only draws outlines
+    on top of it, per Task 3's explicit instruction."""
+    fig, (ax_img, ax_bar) = plt.subplots(1, 2, figsize=(9, 4.2), gridspec_kw={"width_ratios": [1, 1.1]})
+
+    ax_img.imshow(overlay01)
+    ax_img.axis("off")
+    fx1, fy1, fx2, fy2 = face_box_224
+    ax_img.add_patch(
+        plt.Rectangle((fx1, fy1), fx2 - fx1, fy2 - fy1, fill=False, edgecolor="white", linewidth=1.5)
+    )
+
+    region_order = [r for r in ("forehead", "eyes", "nose", "mouth") if r in masks]
+    for name in region_order:
+        bb = bbox_from_mask(masks[name].astype(np.uint8))
+        if bb:
+            x1, y1, x2, y2 = bb
+            ax_img.add_patch(
+                plt.Rectangle(
+                    (x1, y1), x2 - x1, y2 - y1, fill=False, edgecolor=_REGION_COLORS[name], linewidth=1.8
+                )
+            )
+    ax_img.set_title("Regions (approximate)", fontsize=10)
+
+    bar_names = [n for n in region_order + ["rest_of_face", "outside_face"] if n in percentages]
+    bar_values = [percentages[n] for n in bar_names]
+    bar_colors = [_REGION_COLORS[n] for n in bar_names]
+    bar_labels = [n.replace("_", " ") for n in bar_names]
+
+    ax_bar.barh(bar_labels, bar_values, color=bar_colors, edgecolor="black", linewidth=0.5)
+    ax_bar.set_xlabel("% of attention", fontsize=9)
+    ax_bar.set_xlim(0, max(100, max(bar_values) * 1.1 if bar_values else 100))
+    for i, v in enumerate(bar_values):
+        ax_bar.text(v + 1, i, f"{v:.0f}%", va="center", fontsize=8)
+    ax_bar.invert_yaxis()
+
+    fig.suptitle(title, fontsize=11, y=1.02)
+    fig.tight_layout()
+    return figure_to_data_uri(fig, dpi=180)
+
+
 # --------------------------------------------------------------------------
 # Core explanation pipeline shared by both entry points
 # --------------------------------------------------------------------------
-def explain_image(image_bytes, mode="quick", true_label_display=None):
-    """mode: 'quick' | 'cross_check' | 'full'"""
-    pil, arr01 = load_preprocess(image_bytes)
+def explain_image(
+    image_bytes,
+    mode="quick",
+    true_label_display=None,
+    crop_box=None,
+    face_box_224=None,
+    landmarks_224=None,
+    blur_eyes=False,
+):
+    """mode: 'quick' | 'cross_check' | 'full'
+
+    blur_eyes: Part C / Task 4 privacy. When True, every image returned
+    for display (original, overlays, LIME, 4-panel, overlap, region
+    figure) gets its eye band pixelated — but the model and every XAI
+    computation still run on the real, unaltered image (`arr01`), never
+    on the blurred version. /predict/sample always passes True (these
+    are real children's photos); /predict/upload defaults to False
+    (the user's own photo) unless they opt in.
+
+    crop_box, if given, is a (x1, y1, x2, y2) box in the *original*
+    image's pixel coordinates (from face_detection.compute_crop_box) —
+    applied before the resize to the model's input size, so an uploaded
+    photo where the face is small gets cropped to match the training
+    images' tight-crop framing (Part B / Task 2). None (the default)
+    preserves the exact prior behaviour: resize the whole image as-is.
+
+    face_box_224 / landmarks_224, if given, are already in the model's
+    224x224 input coordinate space (see run_face_check_on_bytes) and
+    drive the Task 3 region-of-interest analysis (region masks, %
+    attention per region, the off-face warning, and the region figure).
+    Without them, this falls back to the original coarse, quadrant-based
+    describe_region() heuristic — used by direct callers that never ran
+    the Part B face check (tests, tools/reproduce_thesis_tables.py).
+    """
+    if crop_box is None:
+        pil, arr01 = load_preprocess(image_bytes)
+    else:
+        if isinstance(image_bytes, (bytes, bytearray)):
+            pil_full = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        else:
+            pil_full = Image.open(image_bytes).convert("RGB")
+        pil_cropped = pil_full.crop(crop_box)
+        pil = pil_cropped.resize((_img_w, _img_h), resample=Image.NEAREST)
+        arr01 = np.asarray(pil).astype("float32") / 255.0
     rgb01 = np.asarray(pil).astype("float32") / 255.0
 
     pred_id, conf, probs = predict(arr01)
@@ -679,8 +854,42 @@ def explain_image(image_bytes, mode="quick", true_label_display=None):
 
     face_box, face_found = detect_face_bbox(rgb01)
 
+    # Part C / Task 4: pixelate the eye band in every DISPLAY image when
+    # requested — never in anything fed to the model or an XAI method,
+    # all of which use arr01/rgb01 (the real image) elsewhere in this
+    # function. rgb01_display is used only in the visualisation calls
+    # below (array_to_data_uri, overlay_heatmap, lime_vis's tint base,
+    # and the 4-panel/overlap/region figures).
+    rgb01_display = rgb01
+    eyes_blurred = False
+    if blur_eyes and face_box_224 is not None:
+        eye_mask = privacy.build_eye_band_mask(landmarks_224, face_box_224, _img_h, _img_w)
+        if eye_mask is not None:
+            rgb01_display = privacy.pixelate(rgb01, eye_mask)
+            eyes_blurred = True
+
     heat_grad = gradcam_heatmap(arr01, pred_id)
-    overlay_grad = overlay_heatmap(rgb01, heat_grad)
+    overlay_grad = overlay_heatmap(rgb01_display, heat_grad)
+
+    # Part B / Task 3: region-of-interest analysis, when we have a face
+    # box from the Task 2 check. Falls back to the old coarse, quadrant-
+    # based describe_region() when we don't (direct callers that skipped
+    # the face check — tests, tools/reproduce_thesis_tables.py).
+    region_masks = None
+    region_attention = None
+    off_face_msg = None
+    if face_box_224 is not None:
+        region_masks = region_analysis.build_region_masks(face_box_224, landmarks_224, _img_h, _img_w)
+        grad_pct, grad_strongest = region_analysis.compute_attention_breakdown(heat_grad, region_masks)
+        region_attention = {"gradcam": {"percentages": grad_pct, "strongest_region": grad_strongest}}
+        off_face_msg = region_analysis.off_face_warning(grad_pct)
+        region_summary = (
+            region_analysis.describe_region_detailed(grad_pct, grad_strongest)
+            if landmarks_224 is not None
+            else region_analysis.describe_region_coarse(grad_pct)
+        )
+    else:
+        region_summary = describe_region(heat_grad, face_box)
 
     result = {
         "prediction": LABEL_DISPLAY[pred_label],
@@ -688,32 +897,54 @@ def explain_image(image_bytes, mode="quick", true_label_display=None):
         "confidence_tier": confidence_tier(conf),
         "prob_non_autistic": round(float(probs[0]) * 100, 1),
         "prob_autistic": round(float(probs[1]) * 100, 1),
-        "original_image": array_to_data_uri(rgb01),
+        "original_image": array_to_data_uri(rgb01_display),
         "gradcam_image": array_to_data_uri(overlay_grad),
-        "region_summary": describe_region(heat_grad, face_box),
+        "region_summary": region_summary,
+        "off_face_warning": off_face_msg,
+        "region_attention": region_attention,
         "face_detected": face_found,
+        "eyes_blurred": eyes_blurred,
+        "privacy_caption": privacy.EYE_BLUR_CAPTION if eyes_blurred else None,
         "method": "Grad-CAM",
     }
 
+    if region_masks is not None:
+        result["region_figure_image"] = build_region_figure(
+            overlay_grad, region_masks, region_attention["gradcam"]["percentages"], face_box_224, "Grad-CAM"
+        )
+
     if mode in ("cross_check", "full"):
         heat_score = score_cam(arr01, pred_id)
-        overlay_score = overlay_heatmap(rgb01, heat_score)
+        overlay_score = overlay_heatmap(rgb01_display, heat_score)
         result["scorecam_image"] = array_to_data_uri(overlay_score)
         result["method"] = "Grad-CAM + Score-CAM"
 
+        if region_masks is not None:
+            score_pct, score_strongest = region_analysis.compute_attention_breakdown(heat_score, region_masks)
+            result["region_attention"]["scorecam"] = {
+                "percentages": score_pct,
+                "strongest_region": score_strongest,
+            }
+
     if mode == "full":
         lime_explanation = run_lime_explanation(arr01)
-        lime_img = lime_vis(arr01, pred_id, lime_explanation)
+        lime_img = lime_vis(rgb01_display, arr01, pred_id, lime_explanation)
         # continuous map, for overlap metrics
         lime_map = lime_saliency_map(pred_id, lime_explanation)
         result["lime_image"] = array_to_data_uri(lime_img)
         result["method"] = "Grad-CAM + Score-CAM + LIME + Overlap Analysis"
 
+        if region_masks is not None:
+            lime_pct, lime_strongest = region_analysis.compute_attention_breakdown(lime_map, region_masks)
+            result["region_attention"]["lime"] = {"percentages": lime_pct, "strongest_region": lime_strongest}
+
         header = (
             f"True: {true_label_display or 'Unknown'} | Pred: {LABEL_DISPLAY[pred_label]} | "
             f"Conf: {conf:.3f} | Probs: [Non_Autistic={probs[0]:.3f}, Autistic={probs[1]:.3f}]"
         )
-        result["panel_4_image"] = build_4panel_figure(rgb01, overlay_grad, overlay_score, lime_img, header)
+        result["panel_4_image"] = build_4panel_figure(
+            rgb01_display, overlay_grad, overlay_score, lime_img, header
+        )
 
         g_del, g_ins = deletion_insertion_curves(arr01, heat_grad, pred_id, steps=30)
         s_del, s_ins = deletion_insertion_curves(arr01, heat_score, pred_id, steps=30)
@@ -725,15 +956,17 @@ def explain_image(image_bytes, mode="quick", true_label_display=None):
         }
 
         gs_img, iou_gs, sp_gs = build_overlap_figure(
-            rgb01, heat_grad, heat_score, "Grad-CAM ROI", "Score-CAM ROI", header
+            rgb01_display, heat_grad, heat_score, "Grad-CAM ROI", "Score-CAM ROI", header
         )
         gl_img, iou_gl, sp_gl = build_overlap_figure(
-            rgb01, heat_grad, lime_map, "Grad-CAM ROI", "LIME ROI", header
+            rgb01_display, heat_grad, lime_map, "Grad-CAM ROI", "LIME ROI", header
         )
         sl_img, iou_sl, sp_sl = build_overlap_figure(
-            rgb01, heat_score, lime_map, "Score-CAM ROI", "LIME ROI", header
+            rgb01_display, heat_score, lime_map, "Score-CAM ROI", "LIME ROI", header
         )
-        three_img, three_ious = build_3way_overlap_figure(rgb01, heat_grad, heat_score, lime_map, header)
+        three_img, three_ious = build_3way_overlap_figure(
+            rgb01_display, heat_grad, heat_score, lime_map, header
+        )
 
         result["overlap"] = {
             "grad_vs_score": {"image": gs_img, "iou": round(iou_gs, 3), "spearman": round(sp_gs, 3)},
@@ -752,6 +985,128 @@ def explain_image(image_bytes, mode="quick", true_label_display=None):
 def index():
     n_samples = len(_list_test_images())
     return render_template("index.html", model_ready=model_ready(), n_samples=n_samples)
+
+
+@app.context_processor
+def _inject_wording():
+    """Make the shared banner/disclaimer wording available to every template."""
+    return {"research_banner": wording.RESEARCH_BANNER, "result_disclaimer": wording.RESULT_DISCLAIMER}
+
+
+def _xai_settings():
+    """(label, description) rows for the About page, read from the live
+    constants and function defaults so the page can't drift from the code."""
+    score_params = inspect.signature(score_cam).parameters
+    faith_params = inspect.signature(deletion_insertion_curves).parameters
+    blur_params = inspect.signature(blur_baseline).parameters
+    qs = LIME_QUICKSHIFT
+    blur_k = blur_params["k"].default
+    return [
+        (
+            "Grad-CAM",
+            f"Gradient-weighted class activation map taken from layer {_last_conv_name or 'the last convolutional layer'}.",
+        ),
+        (
+            "Score-CAM",
+            f"Gradient-free. Weights {score_params['max_maps'].default} feature maps by how much "
+            "each one raises the predicted class score.",
+        ),
+        (
+            "LIME",
+            f"{LIME_NUM_SAMPLES:,} perturbed samples over quickshift superpixels (kernel size "
+            f"{qs['kernel_size']}, max distance {qs['max_dist']}, ratio {qs['ratio']}). The top "
+            f"{LIME_NUM_FEATURES} superpixels are shown: green supports the prediction, red contradicts it.",
+        ),
+        (
+            "Agreement between methods",
+            f"Overlap (IoU) of each method's top {TOPK_OVERLAP_FRACTION:.0%} of pixels, and Spearman rank correlation.",
+        ),
+        (
+            "Faithfulness",
+            f"Deletion and insertion curves over {faith_params['steps'].default} steps with a "
+            f"{blur_k}\u00d7{blur_k} average-blur baseline; the area under each curve is reported.",
+        ),
+        (
+            "Face check",
+            f"Exactly one face is required (detected with YuNet). A photo is rejected if the detection score "
+            f"is below {face_detection.SCORE_THRESHOLD} or the face is narrower than "
+            f"{face_detection.MIN_FACE_WIDTH_PX} px; a warning is shown if the eyes are tilted by more than "
+            f"{face_detection.EYE_TILT_WARN_DEGREES:.0f}\u00b0.",
+        ),
+        (
+            "Cropping",
+            f"If the face fills less than {face_detection.CROP_IF_FACE_FRACTION_BELOW:.0%} of the photo, it is "
+            f"cropped around the face so the face fills about {face_detection.TARGET_FACE_FRACTION:.0%} of the "
+            "crop, matching the framing of the test images.",
+        ),
+        (
+            "Face regions",
+            "Forehead, eyes, nose, mouth and rest-of-face regions are approximate, built from five facial "
+            f"landmarks. A warning is shown when less than {region_analysis.ON_FACE_WARNING_THRESHOLD:.0%} of "
+            "the model's attention falls on the face.",
+        ),
+    ]
+
+
+_FACT_FIELDS = (
+    "dataset_name",
+    "dataset_source",
+    "training_set_size",
+    "class_balance",
+    "data_split",
+    "augmentation",
+    "training_notes",
+)
+
+
+def build_about_context():
+    """Everything the About page needs. Performance figures come only from
+    the measured report (and are withheld if it was measured on a
+    different model file) — see model_card.load_performance."""
+    sha = model_card.file_sha256(MODEL_PATH)
+    facts = model_card.load_facts(os.path.join(BASE_DIR, "model_card_facts.json"))
+    return {
+        "model": {
+            "file": os.path.basename(MODEL_PATH),
+            "size_mb": model_card.file_size_mb(MODEL_PATH),
+            "sha256": sha,
+            "input_size": f"{_img_w}\u00d7{_img_h}",
+            "gradcam_layer": _last_conv_name,
+        },
+        "performance": model_card.load_performance(os.path.join(REPORTS_DIR, "lab_validation.json"), sha),
+        "xai_rows": _xai_settings(),
+        "facts": facts,
+        "fact_rows": {key: model_card.fact_or_placeholder(facts[key]) for key in _FACT_FIELDS},
+        "training_facts_filled": any(facts[key] not in (None, "", []) for key in _FACT_FIELDS),
+        "placeholder": model_card.TO_BE_COMPLETED,
+    }
+
+
+@app.route("/about")
+def about():
+    """Model card: what the model is, how it was measured, how the
+    explanations are produced, and its limitations."""
+    return render_template("about.html", **build_about_context())
+
+
+@app.route("/lab")
+def lab_report():
+    """Lab validation report (Task 5): the web app's own code run over the
+    whole test set and compared with the thesis numbers. Generated
+    offline by `python tools/run_lab_validation.py` — a 280-image batch
+    is far too slow to run inside a web request, so this only serves the
+    finished file."""
+    report_path = os.path.join(REPORTS_DIR, "lab_validation.html")
+    if not os.path.exists(report_path):
+        return (
+            "<!doctype html><title>Lab validation</title>"
+            "<p>No lab validation report has been generated yet.</p>"
+            "<p>Run <code>python tools/run_lab_validation.py</code> on the machine "
+            "that has the model and test images, then reload this page.</p>",
+            404,
+        )
+    with open(report_path, encoding="utf-8") as f:
+        return f.read()
 
 
 def _list_test_images():
@@ -785,14 +1140,37 @@ def predict_upload():
     if ext not in ALLOWED_EXT:
         return jsonify({"error": f"Unsupported file type '{ext}'. Use JPG, PNG, BMP or WEBP."}), 400
 
+    image_bytes = file.read()
+
+    face_check = run_face_check_on_bytes(image_bytes)
+    if not face_check["ok"]:
+        return (
+            jsonify({"rejected": True, "reason": face_check["reason"], "message": face_check["message"]}),
+            422,
+        )
+
     mode = _resolve_mode()
+    # Privacy (Task 4): uploads are the user's own photo, so leave them
+    # unmasked by default — only blur if they explicitly opt in.
+    blur_eyes = request.form.get("blur_eyes") == "true"
     try:
-        result = explain_image(file.read(), mode=mode)
+        result = explain_image(
+            image_bytes,
+            mode=mode,
+            crop_box=face_check["crop_box"],
+            face_box_224=face_check["face_box_224"],
+            landmarks_224=face_check["landmarks_224"],
+            blur_eyes=blur_eyes,
+        )
     except Exception as exc:  # noqa: BLE001 - surface a readable error to the UI
         return jsonify({"error": f"Could not process this image: {exc}"}), 500
 
     result["source"] = "upload"
     result["true_label"] = None
+    result["tilt_warning"] = face_check["tilt_warning"]
+    result["tilt_message"] = face_check["tilt_message"]
+    result["face_cropped"] = face_check["crop_box"] is not None
+    result["face_detector_used_fallback"] = face_check["used_fallback"]
     return jsonify(result)
 
 
@@ -818,15 +1196,45 @@ def predict_sample():
     true_label = infer_true_label_from_filename(path)
     true_label_display = LABEL_DISPLAY[true_label] if true_label else None
 
+    with open(path, "rb") as f:
+        image_bytes = f.read()
+
+    face_check = run_face_check_on_bytes(image_bytes)
+    if not face_check["ok"]:
+        return (
+            jsonify(
+                {
+                    "rejected": True,
+                    "reason": face_check["reason"],
+                    "message": face_check["message"],
+                    "source": "sample",
+                    "filename": os.path.basename(path),
+                }
+            ),
+            422,
+        )
+
     try:
-        with open(path, "rb") as f:
-            result = explain_image(f.read(), mode=mode, true_label_display=true_label_display)
+        result = explain_image(
+            image_bytes,
+            mode=mode,
+            true_label_display=true_label_display,
+            crop_box=face_check["crop_box"],
+            face_box_224=face_check["face_box_224"],
+            landmarks_224=face_check["landmarks_224"],
+            # Task 4: mandatory for sample images (real dataset photos)
+            blur_eyes=True,
+        )
     except Exception as exc:  # noqa: BLE001
         return jsonify({"error": f"Could not process this image: {exc}"}), 500
 
     result["source"] = "sample"
     result["filename"] = os.path.basename(path)
     result["true_label"] = true_label_display
+    result["tilt_warning"] = face_check["tilt_warning"]
+    result["tilt_message"] = face_check["tilt_message"]
+    result["face_cropped"] = face_check["crop_box"] is not None
+    result["face_detector_used_fallback"] = face_check["used_fallback"]
     return jsonify(result)
 
 
